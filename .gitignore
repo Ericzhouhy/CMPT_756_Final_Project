@@ -1,2 +1,8 @@
 
 /data
+
+# Ignore OS-specific files
+.DS_Store
+
+# Ignore IDE specific files
+.vscode/
