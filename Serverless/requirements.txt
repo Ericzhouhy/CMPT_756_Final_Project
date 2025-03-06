@@ -1,0 +1,4 @@
+flask
+torch
+torchvision
+google-cloud-storage

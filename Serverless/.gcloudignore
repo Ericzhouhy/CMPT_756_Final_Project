@@ -1,0 +1,12 @@
+# ignore Python vm
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# ignore uncessary files
+runs/
+data/
+
+google-cloud-sdk/
