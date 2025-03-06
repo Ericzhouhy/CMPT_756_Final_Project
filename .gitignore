@@ -6,3 +6,5 @@
 
 # Ignore IDE specific files
 .vscode/
+/Containerized/data
+runs/.DS_Store
