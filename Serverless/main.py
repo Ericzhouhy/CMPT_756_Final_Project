@@ -3,16 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from flask import Flask, request, jsonify
 from google.cloud import storage
-
-# **Define SimpleModel (must be the same as the one used during training)**
-class SimpleModel(nn.Module):
-    def __init__(self):
-        super(SimpleModel, self).__init__()
-        self.fc = nn.Linear(3072, 100)  # Ensure this matches the training model shape
-
-    def forward(self, x):
-        x = F.relu(self.fc(x))
-        return x
+from torchvision.models import resnet18
+import torchvision
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 
 # **Download the model from Google Cloud Storage (GCS)**
 def download_model_from_gcs(bucket_name, model_path, local_path="/tmp/model.pth"):
@@ -28,24 +23,78 @@ MODEL_PATH = "model.pth"
 
 # **Download and load the model**
 download_model_from_gcs(BUCKET_NAME, MODEL_PATH)
-state_dict = torch.load("/tmp/model.pth", map_location=torch.device("cpu"), weights_only=True)
 
 # **Create the model instance**
-model = SimpleModel()  # ✅ Ensure this matches the training model
-model.load_state_dict(state_dict)
+model = resnet18(pretrained=True)
+model.fc = nn.Linear(model.fc.in_features, 100)  # Adjust for CIFAR-100
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = model.to(device)
+checkpoint = torch.load("/tmp/model.pth", map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+model.load_state_dict(checkpoint['model_state_dict'])  # Load state dict from the checkpoint
 model.eval()
 
-# **Flask API for prediction**
-def predict(request):
-    try:
-        data = request.get_json()
-        if "features" not in data:
-            return jsonify({"error": "Missing 'features'"}), 400
+transform = transforms.Compose([
+    # Todo add other types of augmentation
+    transforms.ToTensor(),
+    transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))  # CIFAR-100 normalization values
+])
 
-        # Convert input data to Tensor
-        features = torch.tensor([data["features"]], dtype=torch.float32)
-        prediction = model(features).tolist()
+batch_size = 64
+train_dataset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+test_dataset = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-        return jsonify({"prediction": prediction})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+def get_correct_predictions(model, loader, max_samples=10):
+    model.eval()
+    correct_samples = []
+    correct_labels = []
+    correct_preds = []
+
+    with torch.no_grad():
+        for inputs, labels in loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, preds = torch.max(outputs, 1)
+
+            correct_indices = (preds == labels).nonzero(as_tuple=True)[0]
+
+            for idx in correct_indices:
+                if len(correct_samples) < max_samples:
+                    correct_samples.append(inputs[idx].cpu())
+                    correct_labels.append(labels[idx].cpu().item())
+                    correct_preds.append(preds[idx].cpu().item())
+                else:
+                    return correct_samples, correct_labels, correct_preds
+
+    return correct_samples, correct_labels, correct_preds
+
+
+def visualize_correct_predictions(model, loader, class_names, max_samples=10):
+    correct_samples, correct_labels, correct_preds = get_correct_predictions(
+        model, loader, max_samples=max_samples
+    )
+
+    fig, axes = plt.subplots(1, len(correct_samples), figsize=(15, 5))
+    if len(correct_samples) == 1:
+        axes = [axes]
+
+    for idx, (img, true_label, pred_label) in enumerate(
+        zip(correct_samples, correct_labels, correct_preds)
+    ):
+        img = img.permute(1, 2, 0)
+        img = img * 0.2673 + 0.5071  # Unnormalize for CIFAR100
+        img = np.clip(img, 0, 1)
+
+        axes[idx].imshow(img)
+        axes[idx].set_title(
+            f"True: {class_names[true_label]}\nPred: {class_names[pred_label]}",
+            fontsize=10,
+        )
+        axes[idx].axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+class_names=train_dataset.classes
+visualize_correct_predictions(model, test_loader, class_names, max_samples=10)
