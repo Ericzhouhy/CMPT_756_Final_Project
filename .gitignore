@@ -6,5 +6,16 @@
 
 # Ignore IDE specific files
 .vscode/
+
 /Containerized/data
+
+
 runs/.DS_Store
+
+/venv
+
+/Serverless/data
+
+/Serverless/google-cloud-sdk/
+
+/Serverless/runs
