@@ -7,7 +7,13 @@ from torchvision.models import resnet18
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
+import json
+import onnxruntime as ort
+import numpy as np
+import requests
+from PIL import Image
+import io
+import functions_framework
 
 # **Download the model from Google Cloud Storage (GCS)**
 def download_model_from_gcs(bucket_name, model_path, local_path="/tmp/model.pth"):
