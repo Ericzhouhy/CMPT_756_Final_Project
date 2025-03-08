@@ -1,4 +1,7 @@
 fastapi
 uvicorn
-onnxruntime
+pillow
 numpy
+requests
+onnxruntime
+google-cloud-storage

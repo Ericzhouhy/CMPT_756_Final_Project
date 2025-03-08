@@ -1,17 +1,17 @@
-# Use a lightweight Python image
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 # Set the working directory
 WORKDIR /app
 
 # Copy the current directory contents into the container at /app
-COPY . /app
+COPY . .
 
-# Install needed packages
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Expose port 80
-EXPOSE 80
+# Expose the port the app runs on
+EXPOSE 8080
 
-# Run the application
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "80"]
+# Command to run the app
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
