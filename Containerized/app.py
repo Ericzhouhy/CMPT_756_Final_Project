@@ -1,18 +1,16 @@
-from fastapi import FastAPI, HTTPException
-import onnxruntime as ort
+import os
 import numpy as np
-from PIL import Image
-import requests
+from flask import Flask, request, jsonify
 from google.cloud import storage
+from PIL import Image
 import io
+import onnxruntime as ort
 
-app = FastAPI()
+# Google Cloud Storage (GCS) Information
+BUCKET_NAME = "erics-model-bucket"
+MODEL_PATH = "cifar100_resnet18_opset12.onnx"  # Ensure the correct ONNX model filename in GCS
 
-# Google Cloud Storage Information
-BUCKET_NAME = "cmpt756-model-bucket"
-MODEL_PATH = "cifar100_resnet18_opset12.onnx"
-
-# CIFAR-100 Labels Dictionary (as defined in your friend's code)
+# CIFAR-100 Labels Dictionary
 CIFAR100_LABELS = {
     0: "apple", 1: "aquarium_fish", 2: "baby", 3: "bear", 4: "beaver",
     5: "bed", 6: "bee", 7: "beetle", 8: "bicycle", 9: "bottle",
@@ -36,47 +34,64 @@ CIFAR100_LABELS = {
     95: "whale", 96: "willow_tree", 97: "wolf", 98: "woman", 99: "worm"
 }
 
+app = Flask(__name__)
+
+# Function to download the ONNX model from GCS
 def load_onnx_model():
     client = storage.Client()
     bucket = client.bucket(BUCKET_NAME)
     blob = bucket.blob(MODEL_PATH)
 
+    # Download ONNX model
     local_path = "/tmp/modified_model.onnx"
     blob.download_to_filename(local_path)
     print("Model downloaded from GCS:", local_path)
 
     return ort.InferenceSession(local_path)
 
+# Load ONNX model globally
 ONNX_MODEL = load_onnx_model()
 
+# Preprocess image before inference
 def preprocess_image(image_bytes):
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    image = image.resize((32, 32))
-    image = np.array(image).astype(np.float32) / 255.0
-    image = np.transpose(image, (2, 0, 1))
-    image = np.expand_dims(image, axis=0)
+    image = image.resize((32, 32))  # CIFAR-100 input size
+    image = np.array(image).astype(np.float32) / 255.0  # Normalize
+    image = np.transpose(image, (2, 0, 1))  # Convert HWC to CHW format
+    image = np.expand_dims(image, axis=0)  # Add batch dimension
     return image
 
+# Postprocess ONNX output
 def postprocess_output(output):
-    predicted_class = np.argmax(output, axis=1)[0]
-    class_name = CIFAR100_LABELS.get(predicted_class, "Unknown")
+    predicted_class = np.argmax(output, axis=1)[0]  # Get index with highest probability
+    class_name = CIFAR100_LABELS.get(predicted_class, "Unknown")  # Map index to label
     return class_name
 
-@app.post("/predict/")
-async def predict(image_url: str):
+@app.route("/predict", methods=["POST"])
+def predict():
     try:
-        response = requests.get(image_url)
-        if response.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to download image")
+        if 'file' not in request.files:
+            return jsonify({"error": "No file part"}), 400
 
-        image_bytes = response.content
+        file = request.files['file']
+
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
+
+        image_bytes = file.read()
+
+        # Preprocess and predict
         input_tensor = preprocess_image(image_bytes)
-        input_name = ONNX_MODEL.get_inputs()[0].name
+        input_name = ONNX_MODEL.get_inputs()[0].name  # Dynamically get the correct input name
         output = ONNX_MODEL.run(None, {input_name: input_tensor})[0]
 
+        # Postprocess result
         result = postprocess_output(output)
 
-        return {"prediction": result}
+        return jsonify({"prediction": result}), 200
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return jsonify({"error": str(e)}), 400
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
