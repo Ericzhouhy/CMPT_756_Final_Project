@@ -24,3 +24,5 @@ runs/.DS_Store
 /Containerized/runs
 /Containerized/runs
 /google-cloud-sdk
+/Containerized/.conda
+/Containerized/onnx_env
