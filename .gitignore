@@ -26,3 +26,5 @@ runs/.DS_Store
 /google-cloud-sdk
 /Containerized/.conda
 /Containerized/onnx_env
+/Containerized/runs/cifar100_resnet18
+/Containerized/runs

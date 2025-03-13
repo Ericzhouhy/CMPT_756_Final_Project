@@ -1,7 +1,5 @@
-torch
-torchvision
-flask
-google-cloud-storage
-onnxruntime
-requests
-pillow
+torchmetrics
+tensorboard
+matplotlib
+numpy
+onnx
