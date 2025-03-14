@@ -1,22 +1,33 @@
+import os
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from flask import Flask, request, jsonify, Response
-from google.cloud import storage
+import torch.optim as optim
+import torchvision
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader
 from torchvision.models import resnet18
-import numpy as np
-from PIL import Image
+import torchmetrics
+from flask import Flask, request, jsonify
 import io
+from io import BytesIO
 import requests
-import onnxruntime as ort
-import functions_framework
-import json
+from PIL import Image
+import threading
+from google.cloud import storage
 
-# Google Cloud Storage (GCS) Information
-BUCKET_NAME = "cmpt756-model-bucket"
-MODEL_PATH = "cifar100_resnet18_opset12.onnx"  # Ensure the correct ONNX model filename in GCS
+# Initialize Flask application
+app = Flask(__name__)
 
-# CIFAR-100 Labels Dictionary
+# Set device (GPU or CPU)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Google Cloud Storage Configuration
+GCS_BUCKET_NAME = "cmpt756-model-bucket"  # Replace with your actual GCS bucket name
+GCS_CHECKPOINT_PATH = "checkpoints/latest_checkpoint.pth"  # Always overwrite the latest checkpoint
+TMP_CHECKPOINT_DIR = "/tmp"  # Temporary storage directory
+LOCAL_CHECKPOINT_PATH = f"{TMP_CHECKPOINT_DIR}/latest_checkpoint.pth"
+
+# CIFAR-100 class label mapping
 CIFAR100_LABELS = {
     0: "apple", 1: "aquarium_fish", 2: "baby", 3: "bear", 4: "beaver",
     5: "bed", 6: "bee", 7: "beetle", 8: "bicycle", 9: "bottle",
@@ -40,98 +51,168 @@ CIFAR100_LABELS = {
     95: "whale", 96: "willow_tree", 97: "wolf", 98: "woman", 99: "worm"
 }
 
-# Function to download the ONNX model from GCS
-def load_onnx_model():
+# Data preprocessing transformations
+transform = transforms.Compose([
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.RandomCrop(32, padding=4),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
+])
+
+# Load CIFAR-100 dataset
+batch_size = 64
+train_dataset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+test_dataset = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+# Define ResNet18 model
+model = resnet18(weights=torchvision.models.ResNet18_Weights.DEFAULT)
+model.fc = nn.Linear(model.fc.in_features, 100)
+model = model.to(device)
+
+# Define loss function and optimizer
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(model.parameters(), lr=0.01, weight_decay=5e-4)
+
+# Function to save checkpoint and overwrite the previous one
+def save_checkpoint(model, optimizer, epoch, loss_metric, accuracy_metric):
+    checkpoint = {
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'epoch': epoch,
+        'loss': loss_metric.compute().item(),
+        'accuracy': accuracy_metric.compute().item()
+    }
+
+    # Save locally
+    torch.save(checkpoint, LOCAL_CHECKPOINT_PATH)
+    print(f'Checkpoint saved locally at {LOCAL_CHECKPOINT_PATH}')
+
+    # Upload to Google Cloud Storage and overwrite the previous checkpoint
     client = storage.Client()
-    bucket = client.bucket(BUCKET_NAME)
-    blob = bucket.blob(MODEL_PATH)
+    bucket = client.bucket(GCS_BUCKET_NAME)
+    blob = bucket.blob(GCS_CHECKPOINT_PATH)
+    blob.upload_from_filename(LOCAL_CHECKPOINT_PATH)
+    print(f"Checkpoint uploaded to GCS: gs://{GCS_BUCKET_NAME}/{GCS_CHECKPOINT_PATH}")
 
-    # Download ONNX model
-    local_path = "/tmp/modified_model.onnx"
-    blob.download_to_filename(local_path)
-    print("Model downloaded from GCS:", local_path)
+# Function to load the latest model checkpoint from GCS
+def load_latest_checkpoint(model, optimizer=None):
+    client = storage.Client()
+    bucket = client.bucket(GCS_BUCKET_NAME)
+    blob = bucket.blob(GCS_CHECKPOINT_PATH)
 
-    return ort.InferenceSession(local_path)
+    if not blob.exists():
+        print("No checkpoint found in GCS. Starting from scratch.")
+        return 0
 
-# Load ONNX model globally
-ONNX_MODEL = load_onnx_model()
+    # Download latest checkpoint
+    blob.download_to_filename(LOCAL_CHECKPOINT_PATH)
+    print(f"Checkpoint downloaded from GCS: gs://{GCS_BUCKET_NAME}/{GCS_CHECKPOINT_PATH}")
 
-# Preprocess image before inference
-def preprocess_image(image_bytes):
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    image = image.resize((32, 32))  # CIFAR-100 input size
-    image = np.array(image).astype(np.float32) / 255.0  # Normalize
-    image = np.transpose(image, (2, 0, 1))  # Convert HWC to CHW format
-    image = np.expand_dims(image, axis=0)  # Add batch dimension
-    return image
+    checkpoint = torch.load(LOCAL_CHECKPOINT_PATH, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
 
-# Postprocess ONNX output
-def postprocess_output(output):
-    predicted_class = np.argmax(output, axis=1)[0]  # Get index with highest probability
-    class_name = CIFAR100_LABELS.get(predicted_class, "Unknown")  # Map index to label
-    return class_name
+    if optimizer:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-# Cloud Function entry point
-@functions_framework.http
-def predict(request):
-    try:
-        request_json = request.get_json()
+    return checkpoint['epoch']
 
-        # Validate input
-        if "image_url" not in request_json:
-            return jsonify({"error": "Missing 'image_url'"}), 400
+# Function to train the model
+def train_model(model, train_loader, criterion, optimizer, num_epochs=5, resume=True):
+    loss_metric = torchmetrics.MeanMetric().to(device)
+    accuracy_metric = torchmetrics.Accuracy(task="multiclass", num_classes=100).to(device)
 
-        image_url = request_json["image_url"]
-        response = requests.get(image_url)
+    start_epoch = 0
+    if resume:
+        start_epoch = load_latest_checkpoint(model, optimizer)
+        print(f"Resuming training from epoch {start_epoch+1}")
 
-        if response.status_code != 200:
-            return jsonify({"error": "Failed to download image"}), 400
+    model.train()
+    for epoch in range(start_epoch, num_epochs):
+        loss_metric.reset()
+        accuracy_metric.reset()
 
-        image_bytes = response.content
-        print("Image downloaded successfully")
+        for i, (inputs, labels) in enumerate(train_loader):
+            inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
 
-        # Preprocess and predict
-        input_tensor = preprocess_image(image_bytes)
-        input_name = ONNX_MODEL.get_inputs()[0].name  # Dynamically get the correct input name
-        output = ONNX_MODEL.run(None, {input_name: input_tensor})[0]
+            loss_metric.update(loss)
+            accuracy_metric.update(outputs, labels)
 
-        
-        # Postprocess result
-        result = postprocess_output(output)
+            if i % 100 == 0:
+                avg_loss = loss_metric.compute().item()
+                avg_acc = accuracy_metric.compute().item() * 100
+                print(f"Epoch [{epoch+1}/{num_epochs}]: Loss={avg_loss:.4f}, Accuracy={avg_acc:.2f}%")
 
-        return jsonify({"prediction": result}), 200
+        save_checkpoint(model, optimizer, epoch, loss_metric, accuracy_metric)
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+    print("Training completed!")
 
-# Local Testing
+# API to start training
+@app.route("/start_train", methods=["POST"])
+def start_training():
+    training_thread = threading.Thread(target=train_model, args=(model, train_loader, criterion, optimizer, 5))
+    training_thread.start()
+    return jsonify({"message": "Training started"}), 200
+
+# API to evaluate model
+@app.route("/evaluate", methods=["GET"])
+def evaluate():
+    load_latest_checkpoint(model)
+    loss_metric = torchmetrics.MeanMetric().to(device)
+    accuracy_metric = torchmetrics.Accuracy(task="multiclass", num_classes=100).to(device)
+
+    model.eval()
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
+            loss_metric.update(loss)
+            accuracy_metric.update(outputs, labels)
+
+    avg_loss = loss_metric.compute()
+    avg_acc = accuracy_metric.compute() * 100
+    return jsonify({"loss": avg_loss.item(), "accuracy": avg_acc.item()}), 200
+
+# API to predict an image
+@app.route("/predict", methods=["POST"])
+def predict():
+    data = request.get_json()
+
+    if "image_url" in data:
+        try:
+            response = requests.get(data["image_url"])
+            response.raise_for_status()
+            image = Image.open(BytesIO(response.content)).convert("RGB")
+        except requests.exceptions.RequestException:
+            return jsonify({"error": "Invalid image URL"}), 400
+    elif "file" in request.files:
+        image = Image.open(request.files["file"]).convert("RGB")
+    else:
+        return jsonify({"error": "No image uploaded"}), 400
+
+    image = transform(image).unsqueeze(0)  # Add batch dimension
+    model.eval()
+
+    with torch.no_grad():
+        outputs = model(image)
+        _, predicted = torch.max(outputs, 1)
+        label = CIFAR100_LABELS[predicted.item()]
+
+    return jsonify({"prediction": label})
+
+# Load latest checkpoint on startup
+load_latest_checkpoint(model)
+
+# Start Flask server
 if __name__ == "__main__":
-    app = Flask(__name__)
-
-    @app.route("/predict", methods=["POST"])
-    def test_predict():
-        test_request_data = json.dumps({
-            "image_url": "https://upload.wikimedia.org/wikipedia/commons/3/36/United_Airlines_Boeing_777-200_Meulemans.jpg"
-        })
-
-        test_request = app.test_request_context(
-            path="/predict", method="POST", data=test_request_data, content_type="application/json"
-        )
-
-        with test_request:
-            response, status_code = predict(request)  # Extract tuple correctly
-
-        print("🔍 Prediction Response:", response)  # Debugging: prints full response tuple
-
-        if isinstance(response, Response):  # If Flask response, use .get_json()
-            response_json = response.get_json()
-        else:
-            response_json = json.loads(response.data.decode("utf-8"))  # Extract manually if not Flask Response
-
-        print(f"✅ Status Code: {status_code}")
-        print(f"✅ JSON Response: {response_json}")
-
-    # Run the test
-    test_predict()
-
-
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

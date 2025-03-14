@@ -6,4 +6,6 @@ onnxruntime
 requests
 Pillow
 numpy
-functions-framework
+gunicorn
+torchmetrics
+
