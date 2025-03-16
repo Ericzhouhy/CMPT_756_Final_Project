@@ -36,7 +36,6 @@ test_dataset = torchvision.datasets.CIFAR100(root='./data', train=False, downloa
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 
-
 # Define the model
 model = resnet18(pretrained=True)  # Set num_classes to 100 for CIFAR-100
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -112,12 +111,13 @@ def train_model(model, train_loader, criterion, optimizer, num_epochs=1, start_e
 
             loss_metric.update(loss.item())
             accuracy_metric.update(outputs, labels)
-            if i%100 == 0:
-              avg_loss = loss_metric.compute().item()
-              avg_acc = accuracy_metric.compute().item()
-              avg_acc = avg_acc * 100
-              print(f"Epoch [{epoch}]: Loss={avg_loss}, Accuracy={avg_acc:.2f}")
-
+            
+            if i % 100 == 0:  # Print every 100 batches
+                avg_loss = loss_metric.compute().item()
+                avg_acc = accuracy_metric.compute().item()
+                avg_acc = avg_acc * 100
+                print(f"Epoch [{epoch + 1}/{num_epochs}]: Batch {i + 1}/{len(train_loader)} - Loss={avg_loss:.4f}, Accuracy={avg_acc:.2f}%")
+        
         save_checkpoint(model, optimizer, epoch, loss_metric, accuracy_metric, checkpoint_dir='runs/cifar100_resnet18')
 
 
@@ -143,10 +143,9 @@ def evaluate_model(model, test_loader, criterion, optimizer, checkpoint_dir='run
         avg_loss = loss_metric.compute()
         avg_acc = accuracy_metric.compute()
 
-        return avg_loss, avg_acc*100
-    
+        return avg_loss, avg_acc * 100
 
-#train_model(model, train_loader, criterion, optimizer, num_epochs=100, resume=True, checkpoint_dir='runs/cifar100_resnet18')
+
+# Train and evaluate the model
 train_model(model, train_loader, criterion, optimizer, num_epochs=50, resume=False, checkpoint_dir='runs/cifar100_resnet18')
-
 evaluate_model(model, test_loader, criterion, optimizer, checkpoint_dir='runs/cifar100_resnet18')
