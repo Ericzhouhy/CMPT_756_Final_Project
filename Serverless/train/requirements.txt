@@ -3,8 +3,6 @@ torch
 torchvision
 google-cloud-storage
 requests
-Pillow
-numpy
-gunicorn
 torchmetrics
-
+gunicorn
+pillow

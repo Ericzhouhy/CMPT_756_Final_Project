@@ -10,3 +10,4 @@ runs/
 data/
 
 google-cloud-sdk/
+google-cloud-sdk.staging/
