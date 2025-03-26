@@ -1,0 +1,8 @@
+flask
+torch
+torchvision
+google-cloud-storage
+requests
+torchmetrics
+gunicorn
+pillow

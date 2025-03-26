@@ -2,7 +2,6 @@ flask
 torch
 torchvision
 google-cloud-storage
-onnxruntime
 requests
 Pillow
 numpy
