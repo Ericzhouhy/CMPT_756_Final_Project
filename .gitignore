@@ -28,3 +28,4 @@ runs/.DS_Store
 /Containerized/onnx_env
 /Containerized/runs/cifar100_resnet18
 /Containerized/runs
+/containerized-eric/data
