@@ -1,5 +1,8 @@
 from PIL import Image
 import torchvision.transforms as transforms
+from torchvision.models import resnet18
+import torch
+import torch.nn as nn
 
 CIFAR100_LABELS = {
     0: "apple", 1: "aquarium_fish", 2: "baby", 3: "bear", 4: "beaver",
@@ -55,8 +58,9 @@ def predict_local(image_path, model_path):
     return predicted_class_name
 
 # Define local paths
-image_path = "/content/cat.jpg"  # Replace with actual image path
-model_path = "/content/runs/cifar100_resnet18/checkpoint_epoch_57.pth"  # Replace with actual model path
+# image_path = "./United_Airlines_Boeing_777-200_Meulemans.jpg"  # Replace with actual image path
+image_path = "./Cat03.jpg"  
+model_path = "./checkpoint_epoch_100.pth"  # Replace with actual model path
 
 # Run local prediction
-predict_local(image_path, model_path)
+print(predict_local(image_path, model_path))

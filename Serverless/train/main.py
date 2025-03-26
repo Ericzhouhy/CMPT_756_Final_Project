@@ -13,11 +13,13 @@ from torch.utils.data import DataLoader
 import torchmetrics
 from google.cloud import storage
 import logging
+import sys
 
 # ---------- Logging Setup ----------
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 
 app = Flask(__name__)
@@ -129,40 +131,46 @@ def train_model(model, train_loader, criterion, optimizer, num_epochs=50, resume
     loss_metric = torchmetrics.MeanMetric().to(device)
     accuracy_metric = torchmetrics.Accuracy(task="multiclass", num_classes=100).to(device)
 
-    start_epoch = 0
-    if resume:
-        start_epoch = load_latest_checkpoint(model, optimizer)
-        logging.info(f"Resuming training from epoch {start_epoch + 1}")
+    try:
+        start_epoch = 0
+        if resume:
+            start_epoch = load_latest_checkpoint(model, optimizer)
+            logging.info(f"Resuming training from epoch {start_epoch + 1}")
 
-    model.train()
-    for epoch in range(start_epoch, num_epochs):
-        training_status["current_epoch"] = epoch + 1
-        logging.info(f"Epoch [{epoch+1}/{num_epochs}]")
-        loss_metric.reset()
-        accuracy_metric.reset()
+        model.train()
+        for epoch in range(start_epoch, num_epochs):
+            training_status["current_epoch"] = epoch + 1
+            logging.info(f"Epoch [{epoch+1}/{num_epochs}]")
+            loss_metric.reset()
+            accuracy_metric.reset()
 
-        for i, (inputs, labels) in enumerate(train_loader):
-            inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            for i, (inputs, labels) in enumerate(train_loader):
+                inputs, labels = inputs.to(device), labels.to(device)
+                optimizer.zero_grad()
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
 
-            loss_metric.update(loss)
-            accuracy_metric.update(outputs, labels)
+                loss_metric.update(loss)
+                accuracy_metric.update(outputs, labels)
 
-            if i % 100 == 0:
-                msg = (f"Batch {i}: Loss={loss_metric.compute().item():.4f}, "
-                       f"Accuracy={accuracy_metric.compute().item() * 100:.2f}%")
-                logging.info(msg)
-                training_status["last_log"] = msg
+                if i % 10 == 0:
+                    log_msg = (f"Batch {i}: Loss={loss_metric.compute().item():.4f}, "
+                               f"Accuracy={accuracy_metric.compute().item() * 100:.2f}%")
+                    logging.info(log_msg)
+                    training_status["last_log"] = log_msg
 
-        save_checkpoint(model, optimizer, epoch, loss_metric, accuracy_metric)
+            # save_checkpoint(model, optimizer, epoch, loss_metric, accuracy_metric)
 
-    logging.info("Training completed.")
-    training_status["in_progress"] = False
-    training_status["last_log"] = "Training completed"
+        logging.info("All epochs completed. Training finished.")
+        training_status["in_progress"] = False
+        training_status["last_log"] = "Training completed."
+
+    except Exception as e:
+        logging.exception("Training crashed.")
+        training_status["in_progress"] = False
+        training_status["last_log"] = f"Training failed: {e}"
 
 
 # ---------- Flask API ----------
@@ -170,7 +178,7 @@ def train_model(model, train_loader, criterion, optimizer, num_epochs=50, resume
 def start_training():
     maybe_download_dataset()
     train_dataset = CIFAR100(root='/tmp', train=True, download=False, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
 
     training_thread = threading.Thread(target=train_model, args=(model, train_loader, criterion, optimizer, 50))
     training_thread.start()
