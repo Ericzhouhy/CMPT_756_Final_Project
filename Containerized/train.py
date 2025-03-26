@@ -16,6 +16,14 @@ import glob
 import torch.onnx
 import onnx
 import os
+import google.cloud.logging
+from google.cloud.logging.handlers import CloudLogg
+
+client = google.cloud.logging.Client()
+handler = CloudLoggingHandler(client)
+logger = logging.getLogger('train_logger')
+logger.setLevel(logging.INFO)
+logger.addHandler(handler)
 
 # Define data transformations
 transform = transforms.Compose([
@@ -116,7 +124,7 @@ def train_model(model, train_loader, criterion, optimizer, num_epochs=1, start_e
                 avg_loss = loss_metric.compute().item()
                 avg_acc = accuracy_metric.compute().item()
                 avg_acc = avg_acc * 100
-                print(f"Epoch [{epoch + 1}/{num_epochs}]: Batch {i + 1}/{len(train_loader)} - Loss={avg_loss:.4f}, Accuracy={avg_acc:.2f}%")
+                logger.info(f"Epoch [{epoch + 1}/{num_epochs}]: Batch {i + 1}/{len(train_loader)} - Loss={avg_loss:.4f}, Accuracy={avg_acc:.2f}%")
         
         save_checkpoint(model, optimizer, epoch, loss_metric, accuracy_metric, checkpoint_dir='runs/cifar100_resnet18')
 
