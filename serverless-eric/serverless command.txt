@@ -1,0 +1,9 @@
+gcloud functions deploy cifar100_predict \                                                                           
+  --entry-point cifar100_predict \
+  --runtime python39 \
+  --trigger-http \
+  --allow-unauthenticated \
+  --memory 8192MB \
+  --timeout 540s \
+  --region us-central1 \
+  --source .
