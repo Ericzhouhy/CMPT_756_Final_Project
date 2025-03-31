@@ -8,6 +8,7 @@ from torchvision.models import resnet18
 from google.cloud import storage
 import requests
 import os
+import psutil
 import traceback
 
 app = Flask(__name__)
@@ -82,9 +83,11 @@ def predict():
             image = Image.open(file.stream).convert('RGB')
         elif 'image_url' in request.form:
             image_url = request.form['image_url']
-            response = requests.get(image_url, timeout=5)
+            headers = {"User-Agent": "Mozilla/5.0"}
+            response = requests.get(image_url, headers=headers, timeout=5)
             response.raise_for_status()
             image = Image.open(io.BytesIO(response.content)).convert('RGB')
+
         else:
             return jsonify({'error': 'No image or image_url provided'}), 400
 
@@ -95,6 +98,10 @@ def predict():
             outputs = model(image)
             _, predicted = torch.max(outputs, 1)
             label = CIFAR100_LABELS[predicted.item()]
+        
+        process = psutil.Process(os.getpid())
+        mem_mb = process.memory_info().rss / 1024 / 1024
+        print(f"[MEMORY] Resident memory: {mem_mb:.2f} MB")
 
         return jsonify({'prediction': label})
 
