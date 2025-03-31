@@ -1,4 +1,4 @@
-gcloud functions deploy cifar100_predict \                                                                           
+gcloud functions deploy cifar100_predict \
   --entry-point cifar100_predict \
   --runtime python39 \
   --trigger-http \
