@@ -8,6 +8,7 @@ import io
 import werkzeug
 werkzeug.werkzeug_url_quote = werkzeug.urls.url_quote  # Workaround for compatibility
 from flask import Flask, jsonify
+import requests
 
 # CIFAR-100 labels (same as your local version)
 CIFAR100_LABELS = {
@@ -38,7 +39,7 @@ model = None
 device = torch.device('cpu')
 
 def load_model():
-    global model  # Important: Declare we're using the global variable
+    global model
     if model is None:
         print("Loading model...")
         model = resnet18(pretrained=False)
@@ -56,65 +57,88 @@ transform = transforms.Compose([
     transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
 ])
 
-def cifar100_predict(request):  # << MUST match deployment name exactly
-    """HTTP Cloud Function entry point"""
+def cifar100_predict(request):
+    """HTTP Cloud Function to classify an image"""
     global model
     if model is None:
         model = load_model()
-    
+
     if request.method != 'POST':
         return jsonify({'error': 'Only POST requests accepted'}), 405
-    
+
     try:
-        image_file = request.files.get('image')
-        if not image_file:
-            return jsonify({'error': 'No image provided'}), 400
-        
-        image = Image.open(io.BytesIO(image_file.read())).convert('RGB')
+        # Check if an image file is uploaded
+        if 'image' in request.files:
+            image = Image.open(io.BytesIO(request.files['image'].read())).convert('RGB')
+        elif request.json and 'url' in request.json:
+            # Download image from the provided URL
+            image_url = request.json['url']
+            response = requests.get(image_url)
+            image = Image.open(io.BytesIO(response.content)).convert('RGB')
+        else:
+            return jsonify({'error': 'No image or URL provided'}), 400
+
+        # Preprocess image
         image_tensor = transform(image).unsqueeze(0).to(device)
-        
+
+        # Make prediction
         with torch.no_grad():
             outputs = model(image_tensor)
             _, predicted = torch.max(outputs, 1)
-        
+
         return jsonify({
             'prediction': CIFAR100_LABELS[predicted.item()],
             'class_id': predicted.item()
         })
+    
     except Exception as e:
-        print(f"Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
 def predict(request):
-    """HTTP Cloud Function for predictions"""
+    """HTTP Cloud Function for predictions (supports both file upload & URL)"""
     global model
     if model is None:
         model = load_model()
-    
+
     if request.method != 'POST':
         return jsonify({'error': 'Only POST requests accepted'}), 405
-    
+
     try:
-        # Get image file from request
-        image_file = request.files.get('image')
-        if not image_file:
+        image = None
+        
+        # Check for URL in JSON request
+        if request.is_json:
+            request_json = request.get_json()
+            image_url = request_json.get("image_url")
+            if image_url:
+                response = requests.get(image_url)
+                if response.status_code == 200:
+                    image = Image.open(io.BytesIO(response.content)).convert('RGB')
+                else:
+                    return jsonify({'error': 'Failed to download image from URL'}), 400
+
+        # Check for uploaded file
+        if image is None:
+            image_file = request.files.get('image')
+            if image_file:
+                image = Image.open(io.BytesIO(image_file.read())).convert('RGB')
+        
+        if image is None:
             return jsonify({'error': 'No image provided'}), 400
-        
+
         # Process image
-        image = Image.open(io.BytesIO(image_file.read())).convert('RGB')
         image_tensor = transform(image).unsqueeze(0).to(device)
-        
+
         # Predict
         with torch.no_grad():
             outputs = model(image_tensor)
             _, predicted = torch.max(outputs, 1)
-        
+
         return jsonify({
             'prediction': CIFAR100_LABELS[predicted.item()],
             'class_id': predicted.item()
         })
-    
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-    
     
