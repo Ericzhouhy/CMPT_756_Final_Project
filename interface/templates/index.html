@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Prediction</title>
+</head>
+<body>
+    <h1>Image Prediction</h1>
+    <form method="post" action="/">
+        <label for="image_url">Enter Image URL:</label>
+        <input type="text" id="image_url" name="image_url" required>
+        <button type="submit">Predict</button>
+    </form>
+
+    {% if image_url %}
+    <h2>Image:</h2>
+    <img src="{{ image_url }}" alt="Image" style="max-width: 500px; max-height: 500px;">
+    {% endif %}
+
+    {% if prediction %}
+    <h2>Prediction:</h2>
+    <p>{{ prediction }}</p>
+    {% endif %}
+</body>
+</html>
