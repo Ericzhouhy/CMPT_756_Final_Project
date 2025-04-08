@@ -6,7 +6,7 @@
     <title>Image Prediction</title>
 </head>
 <body>
-    <h1>Image Prediction</h1>
+    <h1>Image Prediction Interface</h1>
     <form method="post" action="/">
         <label for="image_url">Enter Image URL:</label>
         <input type="text" id="image_url" name="image_url" required>
@@ -15,12 +15,19 @@
 
     {% if image_url %}
     <h2>Image:</h2>
-    <img src="{{ image_url }}" alt="Image" style="max-width: 500px; max-height: 500px;">
+    <img src="{{ image_url }}" alt="Image" style="max-width: 300px; max-height: 300px;">
     {% endif %}
 
-    {% if prediction %}
-    <h2>Prediction:</h2>
-    <p>{{ prediction }}</p>
+    {% if serverless_prediction %}
+    <h2>Serverless Prediction:</h2>
+    <p>Prediction: {{ serverless_prediction }}</p>
+    <p>Response Time: {{ serverless_time }} seconds</p>
+    {% endif %}
+
+    {% if containerized_prediction %}
+    <h2>Containerized Prediction:</h2>
+    <p>Prediction: {{ containerized_prediction }}</p>
+    <p>Response Time: {{ containerized_time }} seconds</p>
     {% endif %}
 </body>
 </html>

@@ -1,0 +1,10 @@
+Serverless:
+
+curl -X POST "https://us-central1-erics-first-project-450223.cloudfunctions.net/cifar100_predict"
+-H "Content-Type: application/json"
+-d '{"url": "https://upload.wikimedia.org/wikipedia/commons/1/15/Red_Apple.jpg"}'
+
+Containerized:
+
+curl -X POST https://cifar100-api-4pxvf6xeea-uc.a.run.app/predict
+-d "image_url=https://upload.wikimedia.org/wikipedia/commons/1/15/Red_Apple.jpg"
